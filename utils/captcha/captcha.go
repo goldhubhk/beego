@@ -268,3 +268,35 @@ func NewWithFilter(urlPrefix string, store cache.Cache) *Captcha {
 
 	return cpt
 }
+
+func (c *Captcha) HttpHandler(w http.ResponseWriter, r *http.Request) {
+	var chars []byte
+
+	id := path.Base(r.RequestURI)
+	if i := strings.Index(id, "."); i != -1 {
+		id = id[:i]
+	}
+
+	key := c.key(id)
+
+	if len(r.FormValue("reload")) > 0 {
+		chars = c.genRandChars()
+		if err := c.store.Put(key, chars, c.Expiration); err != nil {
+			http.Error(w, "captcha reload error", http.StatusInternalServerError)
+			logs.Error("Reload Create Captcha Error:", err)
+			return
+		}
+	} else {
+		if v, ok := c.store.Get(key).([]byte); ok {
+			chars = v
+		} else {
+			http.Error(w, "captcha reload error", http.StatusNotFound)
+			return
+		}
+	}
+
+	img := NewImage(chars, c.StdWidth, c.StdHeight)
+	if _, err := img.WriteTo(w); err != nil {
+		logs.Error("Write Captcha Image Error:", err)
+	}
+}
