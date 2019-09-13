@@ -300,3 +300,81 @@ func (c *Captcha) HttpHandler(w http.ResponseWriter, r *http.Request) {
 		logs.Error("Write Captcha Image Error:", err)
 	}
 }
+
+func (c *Captcha) HttpGetHandler(w http.ResponseWriter, r *http.Request) {
+	var chars []byte
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	fmt.Printf("HttpGetHandler: %v,\t%s\n", r.Form.Encode(), r.FormValue("id"))
+
+	id := r.FormValue("id") //path.Base(r.RequestURI)
+	if i := strings.Index(id, "."); i != -1 {
+		id = id[:i]
+	}
+
+	key := c.key(id)
+	fmt.Println("HttpGetHandler: ", r.RequestURI, "\t", id, "\t", key)
+	if len(r.FormValue("reload")) > 0 {
+		chars = c.genRandChars()
+		if err := c.store.Put(key, chars, c.Expiration); err != nil {
+			http.Error(w, "captcha reload error", http.StatusInternalServerError)
+			logs.Error("Reload Create Captcha Error:", err)
+			return
+		}
+	} else {
+		if v, ok := c.store.Get(key).([]byte); ok {
+			chars = v
+		} else {
+			http.Error(w, "captcha reload error", http.StatusNotFound)
+			return
+		}
+	}
+
+	img := NewImage(chars, c.StdWidth, c.StdHeight)
+	if _, err := img.WriteTo(w); err != nil {
+		logs.Error("Write Captcha Image Error:", err)
+	}
+}
+
+func (c *Captcha) CreatePngReplace(baseurl string) template.HTML {
+	value, err := c.CreateCaptcha()
+	if err != nil {
+		logs.Error("Create Captcha Error:", err)
+		return ""
+	}
+
+	// create html
+	return template.HTML(fmt.Sprintf(`<input type="hidden" name="%s" value="%s">`+
+		`<a class="captcha" href="javascript:">`+
+		`<img id=getPng onclick="this.src=('%s%s.png&reload='+(new Date()).getTime())" class="captcha-img" src="%s%s.png">`+
+		`<script src="https://ajax.aspnetcdn.com/ajax/jQuery/jquery-3.4.1.min.js">
+        </script>
+        <script type="text/javascript">
+        var HttpClient = function() {
+          this.get = function(aUrl, aCallback) {
+            var anHttpRequest = new XMLHttpRequest();
+            anHttpRequest.onreadystatechange = function() { 
+                if (anHttpRequest.readyState == 4 && anHttpRequest.status == 200)
+                    aCallback(anHttpRequest.responseText);
+            }
+          
+            anHttpRequest.open( "GET", aUrl, true );            
+            anHttpRequest.send();
+          }        
+        }
+        var client = new HttpClient();
+        function loadImage() {
+          client.get('..%s%s.png&reload='+(new Date()).getTime(), function(response) {
+            document.getElementById("getPng").src=response;
+          });
+        }
+        loadImage();
+        $(document).ready(function(){ 
+          $("img.captcha-img").click(loadImage);
+        })
+        </script>`+
+		`</a>`, c.FieldIDName, value, c.URLPrefix, baseurl+"?id="+value, c.URLPrefix, baseurl+"?id="+value, c.URLPrefix, baseurl+"?id="+value))
+}
